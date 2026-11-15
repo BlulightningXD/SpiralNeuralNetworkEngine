@@ -12,28 +12,36 @@ Write-Host ""
 $java = $null
 $javac = $null
 
-# 1. Check if java is in PATH
-if (Get-Command "java" -ErrorAction SilentlyContinue) {
+# 1. Check JAVA_HOME
+if ($env:JAVA_HOME -and (Test-Path "$env:JAVA_HOME\bin\java.exe")) {
+    $java = "$env:JAVA_HOME\bin\java.exe"
+    $javac = "$env:JAVA_HOME\bin\javac.exe"
+    $env:PATH = "$env:JAVA_HOME\bin;" + $env:PATH
+}
+
+# 2. Check User Microsoft JDK
+if (-not $java) {
+    $msJdk = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs\Microsoft" -Filter "jdk*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+    if ($msJdk -and (Test-Path "$msJdk\bin\java.exe")) {
+        $java = "$msJdk\bin\java.exe"
+        $javac = "$msJdk\bin\javac.exe"
+        $env:PATH = "$msJdk\bin;" + $env:PATH
+    }
+}
+
+# 3. Check system PATH
+if (-not $java -and (Get-Command "java" -ErrorAction SilentlyContinue)) {
     $java = "java"
     $javac = "javac"
 }
 
-# 2. Check Android Studio JBR
+# 4. Check Android Studio JBR
 if (-not $java) {
     $jbrJava = "C:\Program Files\Android\Android Studio\jbr\bin\java.exe"
     if (Test-Path $jbrJava) {
         $java = $jbrJava
         $javac = "C:\Program Files\Android\Android Studio\jbr\bin\javac.exe"
         $env:PATH = "C:\Program Files\Android\Android Studio\jbr\bin;" + $env:PATH
-    }
-}
-
-# 3. Check Program Files Java locations
-if (-not $java) {
-    $candidates = Get-ChildItem -Path "C:\Program Files\Java", "C:\Program Files\Eclipse Adoptium", "C:\Program Files\Microsoft" -Filter "java.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-    if ($candidates) {
-        $java = $candidates[0]
-        $javac = Join-Path (Split-Path $java) "javac.exe"
     }
 }
 
@@ -49,10 +57,10 @@ Write-Host "Java detected: $java" -ForegroundColor Green
 Write-Host ""
 
 if (-not (Test-Path "bin\Main.class")) {
-    Write-Host "Compiling Java sources into bin directory..." -ForegroundColor Yellow
+    Write-Host "Compiling Java sources (targeting Java 17 compatibility)..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Force -Path "bin" | Out-Null
     $files = Get-ChildItem -Path "src" -Filter "*.java" -Recurse | Select-Object -ExpandProperty FullName
-    & $javac -d bin -sourcepath src $files
+    & $javac --release 17 -d bin -sourcepath src $files
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] Compilation failed." -ForegroundColor Red
         Read-Host "Press Enter to exit..."
@@ -65,5 +73,13 @@ Write-Host "Launching Spiral Neural Network Interface Engine..." -ForegroundColo
 & $java -cp bin Main
 
 if ($LASTEXITCODE -ne 0) {
-    Read-Host "Application stopped. Press Enter to exit..."
+    Write-Host "[NOTICE] Recompiling cleanly with your local JDK..." -ForegroundColor Yellow
+    Remove-Item "bin\*" -Recurse -Force
+    $files = Get-ChildItem -Path "src" -Filter "*.java" -Recurse | Select-Object -ExpandProperty FullName
+    & $javac --release 17 -d bin -sourcepath src $files
+    Write-Host "Retrying launch..." -ForegroundColor Cyan
+    & $java -cp bin Main
+    if ($LASTEXITCODE -ne 0) {
+        Read-Host "Application stopped. Press Enter to exit..."
+    }
 }
