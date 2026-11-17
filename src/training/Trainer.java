@@ -180,18 +180,20 @@ public class Trainer implements Runnable {
                         target[pt.getLabel()] = 1.0;
                     }
 
-                    // Forward pass
-                    double[] predicted = network.forward(features);
-
-                    // Compute error / loss gradient
-                    double[] grad = lossFunction.calculateGradient(predicted, target);
-
-                    // Backward pass accumulates gradients
-                    network.backward(grad);
+                    // Forward and backward must be atomic because Layer stores
+                    // mutable forward-pass caches (lastInputs, lastZ, lastActivations).
+                    // The decision-boundary renderer also calls network.forward().
+                    synchronized (network) {
+                        double[] predicted = network.forward(features);
+                        double[] grad = lossFunction.calculateGradient(predicted, target);
+                        network.backward(grad);
+                    }
                 }
 
-                // Update weights after accumulating gradients over the batch
-                network.updateParameters(learningRate, momentum, currentBatchCount);
+                // Keep parameter updates mutually exclusive with inference/rendering.
+                synchronized (network) {
+                    network.updateParameters(learningRate, momentum, currentBatchCount);
+                }
             }
 
             // Periodic evaluation and UI notification
@@ -229,31 +231,35 @@ public class Trainer implements Runnable {
         int correctCount = 0;
         int numClasses = network.getOutputSize();
 
-        for (DataPoint pt : points) {
-            double[] features = pt.toFeatures();
-            double[] target = new double[numClasses];
-            if (pt.getLabel() >= 0 && pt.getLabel() < numClasses) {
-                target[pt.getLabel()] = 1.0;
-            }
-
-            double[] probs = network.forward(features);
-            pt.setProbabilities(probs);
-
-            int predictedClass = 0;
-            double maxP = probs[0];
-            for (int c = 1; c < probs.length; c++) {
-                if (probs[c] > maxP) {
-                    maxP = probs[c];
-                    predictedClass = c;
+        // Evaluate against a stable set of parameters; rendering and training
+        // cannot interleave forward passes with this evaluation.
+        synchronized (network) {
+            for (DataPoint pt : points) {
+                double[] features = pt.toFeatures();
+                double[] target = new double[numClasses];
+                if (pt.getLabel() >= 0 && pt.getLabel() < numClasses) {
+                    target[pt.getLabel()] = 1.0;
                 }
-            }
-            pt.setPredictedLabel(predictedClass);
 
-            if (pt.isCorrect()) {
-                correctCount++;
-            }
+                double[] probs = network.forward(features);
+                pt.setProbabilities(probs);
 
-            totalLoss += lossFunction.calculateLoss(probs, target);
+                int predictedClass = 0;
+                double maxP = probs[0];
+                for (int c = 1; c < probs.length; c++) {
+                    if (probs[c] > maxP) {
+                        maxP = probs[c];
+                        predictedClass = c;
+                    }
+                }
+                pt.setPredictedLabel(predictedClass);
+
+                if (pt.isCorrect()) {
+                    correctCount++;
+                }
+
+                totalLoss += lossFunction.calculateLoss(probs, target);
+            }
         }
 
         double avgLoss = totalLoss / points.size();
