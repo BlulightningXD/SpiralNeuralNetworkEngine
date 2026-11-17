@@ -229,7 +229,6 @@ public class DataPlotter extends JPanel {
                         boundaryImage.setRGB(gx, gy, blended.getRGB());
                     }
                 }
-                }
             boundaryNeedsRepaint = false;
         }
 
