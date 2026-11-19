@@ -108,7 +108,10 @@ public class DataPlotter extends JPanel {
             probeX = mathX;
             probeY = mathY;
             if (network != null) {
-                probeProbabilities = network.forward(new double[]{mathX, mathY});
+                // Do not overwrite Layer's training cache during an inference probe.
+                synchronized (network) {
+                    probeProbabilities = network.forward(new double[]{mathX, mathY}).clone();
+                }
             }
             repaint();
         }
@@ -196,33 +199,36 @@ public class DataPlotter extends JPanel {
             boundaryImage = new BufferedImage(gridResolution, gridResolution, BufferedImage.TYPE_INT_ARGB);
             double[] input = new double[2];
 
-            for (int gy = 0; gy < gridResolution; gy++) {
-                double my = yMax - ((double) gy / (gridResolution - 1)) * (yMax - yMin);
-                input[1] = my;
-
-                for (int gx = 0; gx < gridResolution; gx++) {
-                    double mx = xMin + ((double) gx / (gridResolution - 1)) * (xMax - xMin);
-                    input[0] = mx;
-
-                    double[] probs = network.forward(input);
-                    int bestClass = 0;
-                    double maxP = probs[0];
-                    for (int c = 1; c < probs.length; c++) {
-                        if (probs[c] > maxP) {
-                            maxP = probs[c];
-                            bestClass = c;
+            // Keep the parameter set stable while building one complete mesh,
+            // and prevent these inference calls from corrupting training caches.
+            synchronized (network) {
+                for (int gy = 0; gy < gridResolution; gy++) {
+                    double my = yMax - ((double) gy / (gridResolution - 1)) * (yMax - yMin);
+                    input[1] = my;
+    
+                    for (int gx = 0; gx < gridResolution; gx++) {
+                        double mx = xMin + ((double) gx / (gridResolution - 1)) * (xMax - xMin);
+                        input[0] = mx;
+    
+                        double[] probs = network.forward(input);
+                        int bestClass = 0;
+                        double maxP = probs[0];
+                        for (int c = 1; c < probs.length; c++) {
+                            if (probs[c] > maxP) {
+                                maxP = probs[c];
+                                bestClass = c;
+                            }
                         }
+    
+                        Color baseColor = CLASS_COLORS[bestClass % CLASS_COLORS.length];
+                        // Alpha scale based on prediction confidence
+                        int alpha = showConfidence ? (int) (40 + maxP * 90) : 75;
+                        alpha = Math.max(30, Math.min(180, alpha));
+    
+                        Color blended = new Color(baseColor.getRed(), baseColor.getGreen(), baseColor.getBlue(), alpha);
+                        boundaryImage.setRGB(gx, gy, blended.getRGB());
                     }
-
-                    Color baseColor = CLASS_COLORS[bestClass % CLASS_COLORS.length];
-                    // Alpha scale based on prediction confidence
-                    int alpha = showConfidence ? (int) (40 + maxP * 90) : 75;
-                    alpha = Math.max(30, Math.min(180, alpha));
-
-                    Color blended = new Color(baseColor.getRed(), baseColor.getGreen(), baseColor.getBlue(), alpha);
-                    boundaryImage.setRGB(gx, gy, blended.getRGB());
                 }
-            }
             boundaryNeedsRepaint = false;
         }
 
